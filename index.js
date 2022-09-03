@@ -11,38 +11,16 @@ const nameSchema = Joi.object({
 	name: Joi.string().required(),
 });
 
+const messageSchema = Joi.object({
+	to: Joi.string().required(),
+	text: Joi.string().required(),
+	type: Joi.string().required().valid('message', 'private_message'),
+});
+
 const mongoClient = new MongoClient(process.env.MONGO_URI);
 const server = express();
 server.use(express.json());
 server.use(cors());
-
-const messages = [
-	{
-		to: 'Maria1',
-		text: 'oi sumida rs1',
-		type: 'message',
-	},
-	{
-		to: 'Maria1',
-		text: 'oi sumida rs2',
-		type: 'message',
-	},
-	{
-		to: 'Maria2',
-		text: 'oi sumida rs1',
-		type: 'message',
-	},
-	{
-		to: 'Maria2',
-		text: 'oi sumida rs2',
-		type: 'message',
-	},
-	{
-		to: 'Maria3',
-		text: 'oi sumida rs1',
-		type: 'message',
-	},
-];
 
 let db;
 
@@ -85,33 +63,58 @@ server.post('/participants', (req, res) => {
 		});
 });
 
-server.get('/messages', (req, res) => {
+server.get('/messages', async (req, res) => {
 	const { limit } = req.query;
-	console.log(req.query);
-	console.log(limit);
+	console.log(req.headers.user);
 
-	if (limit) {
-		return res.send(messages.slice(-3));
-	}
+	try {
+		const response = await db.collection('messages').find().toArray();
 
-	db.collection('messages')
-		.find()
-		.toArray()
-		.then((msgs) => {
-			res.send(msgs); // array de usuários
+		const response2 = response.filter((value) => {
+			if (
+				value.to === req.headers.user ||
+				value.from === req.headers.user ||
+				value.type === 'message'
+			) {
+				return value;
+			}
 		});
+
+		if (limit) {
+			return res.send(response2.slice(-limit));
+		} else {
+			res.send(response2); // array de usuários
+		}
+	} catch (error) {
+		console.error(error);
+		res.sendStatus(500);
+	}
 });
 
-server.post('/messages', (req, res) => {
+server.post('/messages', async (req, res) => {
 	const message = req.body;
-	let now = dayjs();
-	message.time = now.format('HH:mm:ss');
-	message.from = req.headers.user;
+	const validationMessage = messageSchema.validate(message, {
+		abortEarly: false,
+	});
 
-	console.log(message);
+	if (validationMessage.error) {
+		const erro = validationMessage.error.details.map((value) => value.message);
+		return res.status(422).send(erro);
+	}
 
-	db.collection('messages').insertOne(message);
-	res.send('ok');
+	const users = await db.collection('participants').find().toArray();
+	const existe = users.find((user) => user.name === req.headers.user);
+
+	if (existe) {
+		let now = dayjs();
+		message.time = now.format('HH:mm:ss');
+		message.from = req.headers.user;
+
+		db.collection('messages').insertOne(message);
+		res.sendStatus(201);
+	} else {
+		return res.status(422).send('Esse usuário não existe!');
+	}
 });
 
 server.listen(5000);
