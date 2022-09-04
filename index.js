@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import Joi from 'joi';
-import { MongoClient } from 'mongodb';
+import { MongoClient, ObjectId, ObjectID } from 'mongodb';
 import dotenv from 'dotenv';
 import dayjs from 'dayjs';
 
@@ -50,6 +50,7 @@ server.post('/participants', (req, res) => {
 		.toArray()
 		.then((arrUsers) => {
 			const teste = arrUsers.find((item) => item.name === user.name);
+			let now = dayjs();
 
 			if (teste !== undefined) {
 				return res.status(409).send('Este nome já está em uso!');
@@ -57,6 +58,13 @@ server.post('/participants', (req, res) => {
 				user.lastStatus = Date.now();
 
 				db.collection('participants').insertOne(req.body);
+				db.collection('messages').insertOne({
+					from: user.name,
+					to: 'Todos',
+					text: 'entra da sala...',
+					type: 'status',
+					time: now.format('HH:mm:ss'),
+				});
 
 				res.sendStatus(201);
 			}
@@ -74,7 +82,8 @@ server.get('/messages', async (req, res) => {
 			if (
 				value.to === req.headers.user ||
 				value.from === req.headers.user ||
-				value.type === 'message'
+				value.type === 'message' ||
+				value.type === 'status'
 			) {
 				return value;
 			}
@@ -116,5 +125,46 @@ server.post('/messages', async (req, res) => {
 		return res.status(422).send('Esse usuário não existe!');
 	}
 });
+
+server.post('/status', async (req, res) => {
+	const users = await db.collection('participants').find().toArray();
+	const existe = users.find((user) => user.name === req.headers.user);
+
+	if (existe) {
+		existe.lastStatus = Date.now();
+		return res.sendStatus(200);
+	} else {
+		return res.sendStatus(404); //tirar msg dps
+	}
+});
+
+async function removeInativos() {
+	const users = await db.collection('participants').find().toArray();
+
+	users.forEach(async (value) => {
+		const { _id: id } = value;
+		let now = dayjs();
+
+		let agora = Date.now() - value.lastStatus;
+
+		if (agora > 10000) {
+			try {
+				await db.collection('participants').deleteOne({ _id: id });
+				await db.collection('messages').insertOne({
+					from: value.name,
+					to: 'Todos',
+					text: 'sai da sala...',
+					type: 'status',
+					time: now.format('HH:mm:ss'),
+				});
+			} catch (error) {
+				console.log(error);
+				res.sendStatus(500);
+			}
+		}
+	});
+}
+
+setInterval(removeInativos, 15000);
 
 server.listen(5000);
